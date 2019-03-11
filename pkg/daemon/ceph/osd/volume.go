@@ -32,9 +32,12 @@ import (
 var cephConfigDir = "/var/lib/ceph"
 
 const (
-	osdsPerDeviceFlag = "--osds-per-device"
-	encryptedFlag     = "--dmcrypt"
-	cephVolumeCmd     = "ceph-volume"
+	osdsPerDeviceFlag   = "--osds-per-device"
+	encryptedFlag       = "--dmcrypt"
+	databaseSizeFlag    = "--block-db-size"
+	cephVolumeCmd       = "ceph-volume"
+	sizeMB              = 1048576 // 1 MB
+	cephVolumeMinDBSize = 1024    // 1GB
 )
 
 func (a *OsdAgent) configureCVDevices(context *clusterd.Context, devices *DeviceOsdMapping) ([]oposd.OSDInfo, error) {
@@ -79,9 +82,26 @@ func (a *OsdAgent) initializeDevices(context *clusterd.Context, devices *DeviceO
 		strconv.Itoa(a.storeConfig.OSDsPerDevice),
 	}...)
 
-	// ceph-volume is soon implementing a parameter to specify the "fast devices", which correspond to the "metadataDevice" from the
-	// crd spec. After that is implemented, we can implement this. In the meantime, we fall back to use rook's partitioning.
+	if a.storeConfig.StoreType == config.Bluestore && a.storeConfig.DatabaseSizeMB > 0 {
+		if a.storeConfig.DatabaseSizeMB < cephVolumeMinDBSize {
+			// ceph-volume will convert this value to ?G. It needs to be > 1G to invoke lvcreate.
+			logger.Infof("skipping databaseSizeMB setting. For it should be larger than 1024MB.")
+		} else {
+			batchArgs = append(batchArgs, []string{
+				databaseSizeFlag,
+				// ceph-volume takes in this value in bytes
+				strconv.FormatInt(int64(a.storeConfig.DatabaseSizeMB)*sizeMB, 10),
+			}...)
+		}
+	}
+
+	// When mixed hdd/ssd devices are given, ceph-volume configures db lv on the ssd.
 	metadataDeviceSpecified := false
+	if a.metadataDevice != "" {
+		logger.Infof("using %s as metadataDevice and let ceph-volume lvm batch decide how to create volumes", a.metadataDevice)
+		metadataDeviceSpecified = true
+		batchArgs = append(batchArgs, path.Join("/dev", a.metadataDevice))
+	}
 
 	configured := 0
 	for name, device := range devices.Entries {
@@ -116,6 +136,14 @@ func (a *OsdAgent) initializeDevices(context *clusterd.Context, devices *DeviceO
 	}
 
 	if configured > 0 {
+		// Reporting
+		reportArgs := append(batchArgs, []string{
+			"--report",
+		}...)
+		if err := context.Executor.ExecuteCommand(false, "", cephVolumeCmd, reportArgs...); err != nil {
+			return fmt.Errorf("failed ceph-volume report. %+v", err) // fail return here as validation provided by ceph-volume
+		}
+
 		if err := context.Executor.ExecuteCommand(false, "", cephVolumeCmd, batchArgs...); err != nil {
 			return fmt.Errorf("failed ceph-volume. %+v", err)
 		}
