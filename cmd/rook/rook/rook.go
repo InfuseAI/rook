@@ -16,7 +16,6 @@ limitations under the License.
 package rook
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -76,12 +75,9 @@ func SetLogLevel() {
 }
 
 func LogStartupInfo(cmdFlags *pflag.FlagSet) {
-	// workaround a k8s logging issue: https://github.com/kubernetes/kubernetes/issues/17162
-	flag.CommandLine.Parse([]string{})
-
 	// log the version number, arguments, and all final flag values (environment variable overrides
 	// have already been taken into account)
-	flagValues := flags.GetFlagsAndValues(cmdFlags, "secret")
+	flagValues := flags.GetFlagsAndValues(cmdFlags, "secret|keyring")
 	logger.Infof("starting Rook %s with arguments '%s'", version.Version, strings.Join(os.Args, " "))
 	logger.Infof("flag values: %s", strings.Join(flagValues, ", "))
 }

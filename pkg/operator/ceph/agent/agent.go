@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/coreos/pkg/capnslog"
 	"github.com/rook/rook/pkg/operator/k8sutil"
@@ -34,12 +36,24 @@ import (
 const (
 	agentDaemonsetName             = "rook-ceph-agent"
 	flexvolumePathDirEnv           = "FLEXVOLUME_DIR_PATH"
+	libModulesPathDirEnv           = "LIB_MODULES_DIR_PATH"
+	agentMountsEnv                 = "AGENT_MOUNTS"
 	flexvolumeDefaultDirPath       = "/usr/libexec/kubernetes/kubelet-plugins/volume/exec/"
 	agentDaemonsetTolerationEnv    = "AGENT_TOLERATION"
 	agentDaemonsetTolerationKeyEnv = "AGENT_TOLERATION_KEY"
+	AgentMountSecurityModeEnv      = "AGENT_MOUNT_SECURITY_MODE"
+	RookEnableSelinuxRelabelingEnv = "ROOK_ENABLE_SELINUX_RELABELING"
+	RookEnableFSGroupEnv           = "ROOK_ENABLE_FSGROUP"
+
+	// MountSecurityModeAny "any" security mode for the agent for mount action
+	MountSecurityModeAny = "Any"
+	// MountSecurityModeRestricted restricted security mode for the agent for mount action
+	MountSecurityModeRestricted = "Restricted"
 )
 
-var logger = capnslog.NewPackageLogger("github.com/rook/rook", "op-agent")
+var (
+	logger = capnslog.NewPackageLogger("github.com/rook/rook", "op-agent")
+)
 
 // New creates an instance of Agent
 func New(clientset kubernetes.Interface) *Agent {
@@ -50,18 +64,43 @@ func New(clientset kubernetes.Interface) *Agent {
 
 // Start the agent
 func (a *Agent) Start(namespace, agentImage, serviceAccount string) error {
-
 	err := a.createAgentDaemonSet(namespace, agentImage, serviceAccount)
 	if err != nil {
-		return fmt.Errorf("Error starting agent daemonset: %v", err)
+		return fmt.Errorf("error starting agent daemonset: %v", err)
 	}
 	return nil
 }
 
 func (a *Agent) createAgentDaemonSet(namespace, agentImage, serviceAccount string) error {
-
 	flexvolumeDirPath, source := a.discoverFlexvolumeDir()
 	logger.Infof("discovered flexvolume dir path from source %s. value: %s", source, flexvolumeDirPath)
+
+	libModulesDirPath := os.Getenv(libModulesPathDirEnv)
+	if libModulesDirPath == "" {
+		libModulesDirPath = "/lib/modules"
+	}
+	agentMountSecurityMode := os.Getenv(AgentMountSecurityModeEnv)
+	if agentMountSecurityMode == "" {
+		logger.Info("no agent mount security mode given, defaulting to '%s' mode", MountSecurityModeAny)
+		agentMountSecurityMode = MountSecurityModeAny
+	}
+	if agentMountSecurityMode != MountSecurityModeAny && agentMountSecurityMode != MountSecurityModeRestricted {
+		return fmt.Errorf("invalid agent mount security mode specified (given: %s)", agentMountSecurityMode)
+	}
+
+	rookEnableSelinuxRelabeling := os.Getenv(RookEnableSelinuxRelabelingEnv)
+	_, err := strconv.ParseBool(rookEnableSelinuxRelabeling)
+	if err != nil {
+		logger.Warningf("Invalid %s value \"%s\". Defaulting to \"true\".", RookEnableSelinuxRelabelingEnv, rookEnableSelinuxRelabeling)
+		rookEnableSelinuxRelabeling = "true"
+	}
+
+	rookEnableFSGroup := os.Getenv(RookEnableFSGroupEnv)
+	_, err = strconv.ParseBool(rookEnableFSGroup)
+	if err != nil {
+		logger.Warningf("Invalid %s value \"%s\". Defaulting to \"true\".", RookEnableFSGroupEnv, rookEnableFSGroup)
+		rookEnableFSGroup = "true"
+	}
 
 	privileged := true
 	ds := &extensions.DaemonSet{
@@ -109,6 +148,9 @@ func (a *Agent) createAgentDaemonSet(namespace, agentImage, serviceAccount strin
 							Env: []v1.EnvVar{
 								k8sutil.NamespaceEnvVar(),
 								k8sutil.NodeEnvVar(),
+								{Name: AgentMountSecurityModeEnv, Value: agentMountSecurityMode},
+								{Name: RookEnableSelinuxRelabelingEnv, Value: rookEnableSelinuxRelabeling},
+								{Name: RookEnableFSGroupEnv, Value: rookEnableFSGroup},
 							},
 						},
 					},
@@ -141,7 +183,7 @@ func (a *Agent) createAgentDaemonSet(namespace, agentImage, serviceAccount strin
 							Name: "libmodules",
 							VolumeSource: v1.VolumeSource{
 								HostPath: &v1.HostPathVolumeSource{
-									Path: "/lib/modules",
+									Path: libModulesDirPath,
 								},
 							},
 						},
@@ -150,6 +192,35 @@ func (a *Agent) createAgentDaemonSet(namespace, agentImage, serviceAccount strin
 				},
 			},
 		},
+	}
+
+	// Add agent mounts if any given through environment
+	agentMounts := os.Getenv(agentMountsEnv)
+	if agentMounts != "" {
+		mounts := strings.Split(agentMounts, ",")
+		for _, mount := range mounts {
+			mountdef := strings.Split(mount, "=")
+			if len(mountdef) != 2 {
+				return fmt.Errorf("badly formatted AGENT_MOUNTS '%s'. The format should be 'mountname=/host/path:/container/path,mountname2=/host/path2:/container/path2'", agentMounts)
+			}
+			mountname := mountdef[0]
+			paths := strings.Split(mountdef[1], ":")
+			if len(paths) != 2 {
+				return fmt.Errorf("badly formatted AGENT_MOUNTS '%s'. The format should be 'mountname=/host/path:/container/path,mountname2=/host/path2:/container/path2'", agentMounts)
+			}
+			ds.Spec.Template.Spec.Containers[0].VolumeMounts = append(ds.Spec.Template.Spec.Containers[0].VolumeMounts, v1.VolumeMount{
+				Name:      mountname,
+				MountPath: paths[1],
+			})
+			ds.Spec.Template.Spec.Volumes = append(ds.Spec.Template.Spec.Volumes, v1.Volume{
+				Name: mountname,
+				VolumeSource: v1.VolumeSource{
+					HostPath: &v1.HostPathVolumeSource{
+						Path: paths[0],
+					},
+				},
+			})
+		}
 	}
 
 	// Add toleration if any
@@ -164,7 +235,7 @@ func (a *Agent) createAgentDaemonSet(namespace, agentImage, serviceAccount strin
 		}
 	}
 
-	_, err := a.clientset.Extensions().DaemonSets(namespace).Create(ds)
+	_, err = a.clientset.Extensions().DaemonSets(namespace).Create(ds)
 	if err != nil {
 		if !kserrors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create rook-ceph-agent daemon set. %+v", err)
@@ -192,37 +263,13 @@ func (a *Agent) discoverFlexvolumeDir() (flexvolumeDirPath, source string) {
 	// determining where the path of the flexvolume dir on the node
 	nodeConfigURI, err := k8sutil.NodeConfigURI()
 	if err != nil {
-		logger.Warningf(err.Error())
+		logger.Warning(err.Error())
 		return getDefaultFlexvolumeDir()
 	}
 	nodeConfig, err := a.clientset.CoreV1().RESTClient().Get().RequestURI(nodeConfigURI).DoRaw()
 	if err != nil {
 		logger.Warningf("unable to query node configuration: %v", err)
 		return getDefaultFlexvolumeDir()
-	}
-
-	// unmarshal to a NodeConfigKubelet
-	configKubelet := NodeConfigKubelet{}
-	if err := json.Unmarshal(nodeConfig, &configKubelet); err != nil {
-		logger.Warningf("unable to parse node config from Kubelet: %+v", err)
-	} else {
-		flexvolumeDirPath = configKubelet.ComponentConfig.VolumePluginDir
-	}
-
-	if flexvolumeDirPath != "" {
-		return flexvolumeDirPath, "NodeConfigKubelet"
-	}
-
-	// unmarshal to a NodeConfigControllerManager
-	configControllerManager := NodeConfigControllerManager{}
-	if err := json.Unmarshal(nodeConfig, &configControllerManager); err != nil {
-		logger.Warningf("unable to parse node config from controller manager: %+v", err)
-	} else {
-		flexvolumeDirPath = configControllerManager.ComponentConfig.VolumeConfiguration.FlexVolumePluginDir
-	}
-
-	if flexvolumeDirPath != "" {
-		return flexvolumeDirPath, "NodeConfigControllerManager"
 	}
 
 	// unmarshal to a KubeletConfiguration

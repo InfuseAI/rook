@@ -73,7 +73,7 @@ func TestStartAgentDaemonset(t *testing.T) {
 	volumeMounts := agentDS.Spec.Template.Spec.Containers[0].VolumeMounts
 	assert.Equal(t, 4, len(volumeMounts))
 	envs := agentDS.Spec.Template.Spec.Containers[0].Env
-	assert.Equal(t, 2, len(envs))
+	assert.Equal(t, 5, len(envs))
 	image := agentDS.Spec.Template.Spec.Containers[0].Image
 	assert.Equal(t, "rook/rook:myversion", image)
 	assert.Nil(t, agentDS.Spec.Template.Spec.Tolerations)
@@ -184,4 +184,16 @@ func TestStartAgentDaemonsetWithToleration(t *testing.T) {
 	assert.Equal(t, "NoSchedule", string(agentDS.Spec.Template.Spec.Tolerations[0].Effect))
 	assert.Equal(t, "example", string(agentDS.Spec.Template.Spec.Tolerations[0].Key))
 	assert.Equal(t, "Exists", string(agentDS.Spec.Template.Spec.Tolerations[0].Operator))
+}
+
+func TestDiscoverFlexDir(t *testing.T) {
+	path, source := getDefaultFlexvolumeDir()
+	assert.Equal(t, "default", source)
+	assert.Equal(t, "/usr/libexec/kubernetes/kubelet-plugins/volume/exec/", path)
+
+	os.Setenv(flexvolumePathDirEnv, "/my/flex/path/")
+	defer os.Unsetenv(flexvolumePathDirEnv)
+	path, source = getDefaultFlexvolumeDir()
+	assert.Equal(t, "env var", source)
+	assert.Equal(t, "/my/flex/path/", path)
 }

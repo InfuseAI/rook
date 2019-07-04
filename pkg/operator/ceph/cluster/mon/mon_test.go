@@ -26,12 +26,14 @@ import (
 	"testing"
 	"time"
 
-	cephv1beta1 "github.com/rook/rook/pkg/apis/ceph.rook.io/v1beta1"
+	cephconfig "github.com/rook/rook/pkg/daemon/ceph/config"
+
+	cephv1 "github.com/rook/rook/pkg/apis/ceph.rook.io/v1"
 	rookalpha "github.com/rook/rook/pkg/apis/rook.io/v1alpha2"
 	"github.com/rook/rook/pkg/clusterd"
 	"github.com/rook/rook/pkg/daemon/ceph/client"
 	clienttest "github.com/rook/rook/pkg/daemon/ceph/client/test"
-	cephmon "github.com/rook/rook/pkg/daemon/ceph/mon"
+	mondaemon "github.com/rook/rook/pkg/daemon/ceph/mon"
 	cephtest "github.com/rook/rook/pkg/daemon/ceph/test"
 	"github.com/rook/rook/pkg/operator/test"
 	exectest "github.com/rook/rook/pkg/util/exec/test"
@@ -41,6 +43,13 @@ import (
 )
 
 func newTestStartCluster(namespace string) *clusterd.Context {
+	monResponse := func() (string, error) {
+		return clienttest.MonInQuorumResponseMany(3), nil
+	}
+	return newTestStartClusterWithQuorumResponse(namespace, monResponse)
+}
+
+func newTestStartClusterWithQuorumResponse(namespace string, monResponse func() (string, error)) *clusterd.Context {
 	clientset := test.New(3)
 	configDir, _ := ioutil.TempDir("", "")
 	defer os.RemoveAll(configDir)
@@ -53,7 +62,7 @@ func newTestStartCluster(namespace string) *clusterd.Context {
 		},
 		MockExecuteCommandWithOutputFile: func(debug bool, actionName string, command string, outFileArg string, args ...string) (string, error) {
 			// mock quorum health check because a second `Start()` triggers a health check
-			return clienttest.MonInQuorumResponseMany(3), nil
+			return monResponse()
 		},
 	}
 	return &clusterd.Context{
@@ -68,8 +77,8 @@ func newCluster(context *clusterd.Context, namespace string, hostNetwork bool, r
 		HostNetwork:          hostNetwork,
 		context:              context,
 		Namespace:            namespace,
-		Version:              "myversion",
-		Size:                 3,
+		rookVersion:          "myversion",
+		Count:                3,
 		AllowMultiplePerNode: true,
 		maxMonID:             -1,
 		waitForStart:         false,
@@ -166,8 +175,8 @@ func TestSaveMonEndpoints(t *testing.T) {
 	clientset := test.New(1)
 	configDir, _ := ioutil.TempDir("", "")
 	defer os.RemoveAll(configDir)
-	c := New(&clusterd.Context{Clientset: clientset, ConfigDir: configDir}, "ns", "", "myversion",
-		cephv1beta1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{}, false,
+	c := New(&clusterd.Context{Clientset: clientset, ConfigDir: configDir}, "ns", "", "myversion", cephv1.CephVersionSpec{},
+		cephv1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{}, false,
 		v1.ResourceRequirements{}, metav1.OwnerReference{})
 	c.clusterInfo = test.CreateConfigDir(1)
 
@@ -200,7 +209,7 @@ func TestSaveMonEndpoints(t *testing.T) {
 	assert.Equal(t, "2", cm.Data[MaxMonIDKey])
 }
 
-func TestMonInQuourm(t *testing.T) {
+func TestMonInQuorum(t *testing.T) {
 	entry := client.MonMapEntry{Name: "foo", Rank: 23}
 	quorum := []int{}
 	// Nothing in quorum
@@ -240,8 +249,8 @@ func TestNameToIndex(t *testing.T) {
 
 func TestAvailableMonNodes(t *testing.T) {
 	clientset := test.New(1)
-	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion",
-		cephv1beta1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
+	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion", cephv1.CephVersionSpec{},
+		cephv1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
 		false, v1.ResourceRequirements{}, metav1.OwnerReference{})
 	c.clusterInfo = test.CreateConfigDir(0)
 	nodes, err := c.getMonNodes()
@@ -267,8 +276,8 @@ func TestAvailableMonNodes(t *testing.T) {
 
 func TestAvailableNodesInUse(t *testing.T) {
 	clientset := test.New(3)
-	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion",
-		cephv1beta1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
+	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion", cephv1.CephVersionSpec{},
+		cephv1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
 		false, v1.ResourceRequirements{}, metav1.OwnerReference{})
 	c.clusterInfo = test.CreateConfigDir(0)
 
@@ -308,8 +317,8 @@ func TestAvailableNodesInUse(t *testing.T) {
 
 func TestTaintedNodes(t *testing.T) {
 	clientset := test.New(3)
-	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion",
-		cephv1beta1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
+	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion", cephv1.CephVersionSpec{},
+		cephv1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
 		false, v1.ResourceRequirements{}, metav1.OwnerReference{})
 	c.clusterInfo = test.CreateConfigDir(0)
 
@@ -343,8 +352,8 @@ func TestTaintedNodes(t *testing.T) {
 
 func TestNodeAffinity(t *testing.T) {
 	clientset := test.New(3)
-	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion",
-		cephv1beta1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
+	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion", cephv1.CephVersionSpec{},
+		cephv1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
 		false, v1.ResourceRequirements{}, metav1.OwnerReference{})
 	c.clusterInfo = test.CreateConfigDir(0)
 
@@ -385,8 +394,8 @@ func TestNodeAffinity(t *testing.T) {
 
 func TestHostNetwork(t *testing.T) {
 	clientset := test.New(3)
-	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion",
-		cephv1beta1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
+	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion", cephv1.CephVersionSpec{},
+		cephv1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
 		false, v1.ResourceRequirements{}, metav1.OwnerReference{})
 	c.clusterInfo = test.CreateConfigDir(0)
 
@@ -417,8 +426,8 @@ func TestGetNodeInfoFromNode(t *testing.T) {
 		},
 	}
 
-	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion",
-		cephv1beta1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
+	c := New(&clusterd.Context{Clientset: clientset}, "ns", "", "myversion", cephv1.CephVersionSpec{},
+		cephv1.MonSpec{Count: 3, AllowMultiplePerNode: true}, rookalpha.Placement{},
 		true, v1.ResourceRequirements{}, metav1.OwnerReference{})
 	c.clusterInfo = test.CreateConfigDir(0)
 
@@ -445,10 +454,8 @@ func TestHostNetworkPortIncrease(t *testing.T) {
 
 	configDir, _ := ioutil.TempDir("", "")
 	defer os.RemoveAll(configDir)
-	c := New(&clusterd.Context{
-		Clientset: clientset,
-		ConfigDir: configDir,
-	}, "ns", "", "myversion", cephv1beta1.MonSpec{Count: 3, AllowMultiplePerNode: true},
+	c := New(&clusterd.Context{Clientset: clientset, ConfigDir: configDir},
+		"ns", "", "myversion", cephv1.CephVersionSpec{}, cephv1.MonSpec{Count: 3, AllowMultiplePerNode: true},
 		rookalpha.Placement{}, true, v1.ResourceRequirements{}, metav1.OwnerReference{})
 	c.clusterInfo = test.CreateConfigDir(0)
 
@@ -456,12 +463,12 @@ func TestHostNetworkPortIncrease(t *testing.T) {
 		{
 			ResourceName: "rook-ceph-mon-a",
 			DaemonName:   "a",
-			Port:         cephmon.DefaultPort,
+			Port:         mondaemon.DefaultPort,
 		},
 		{
 			ResourceName: "rook-ceph-mon-b",
 			DaemonName:   "b",
-			Port:         cephmon.DefaultPort,
+			Port:         mondaemon.DefaultPort,
 		},
 	}
 	c.maxMonID = 1
@@ -476,7 +483,52 @@ func TestHostNetworkPortIncrease(t *testing.T) {
 	assert.Equal(t, node.Name, c.mapping.Node["b"].Name)
 
 	sEndpoint := strings.Split(c.clusterInfo.Monitors["a"].Endpoint, ":")
-	assert.Equal(t, strconv.Itoa(cephmon.DefaultPort), sEndpoint[1])
+	assert.Equal(t, strconv.Itoa(mondaemon.DefaultPort), sEndpoint[1])
 	sEndpoint = strings.Split(c.clusterInfo.Monitors["b"].Endpoint, ":")
-	assert.Equal(t, strconv.Itoa(cephmon.DefaultPort+1), sEndpoint[1])
+	assert.Equal(t, strconv.Itoa(mondaemon.DefaultPort+1), sEndpoint[1])
+
+}
+
+func TestWaitForQuorum(t *testing.T) {
+	namespace := "ns"
+	quorumChecks := 0
+	quorumResponse := func() (string, error) {
+		mons := map[string]*cephconfig.MonInfo{
+			"a": {},
+		}
+		quorumChecks++
+		if quorumChecks == 1 {
+			// return an error the first time while we're waiting for the mon to join quorum
+			return "", fmt.Errorf("test error")
+		}
+		// a successful response indicates that we have quorum, even if we didn't check which specific mons were in quorum
+		return clienttest.MonInQuorumResponseFromMons(mons), nil
+	}
+	context := newTestStartClusterWithQuorumResponse(namespace, quorumResponse)
+	requireAllInQuorum := false
+	expectedMons := []string{"a"}
+	err := waitForQuorumWithMons(context, namespace, expectedMons, 0, requireAllInQuorum)
+	assert.Nil(t, err)
+}
+
+func TestMonFoundInQuorum(t *testing.T) {
+	response := client.MonStatusResponse{}
+
+	// "a" is in quorum
+	response.Quorum = []int{0}
+	response.MonMap.Mons = []client.MonMapEntry{
+		{Name: "a", Rank: 0},
+		{Name: "b", Rank: 1},
+		{Name: "c", Rank: 2},
+	}
+	assert.True(t, monFoundInQuorum("a", response))
+	assert.False(t, monFoundInQuorum("b", response))
+	assert.False(t, monFoundInQuorum("c", response))
+
+	// b and c also in quorum, but not d
+	response.Quorum = []int{0, 1, 2}
+	assert.True(t, monFoundInQuorum("a", response))
+	assert.True(t, monFoundInQuorum("b", response))
+	assert.True(t, monFoundInQuorum("c", response))
+	assert.False(t, monFoundInQuorum("d", response))
 }

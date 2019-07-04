@@ -32,6 +32,12 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
   - services
   verbs:
   - get
@@ -92,7 +98,7 @@ spec:
       serviceAccountName: rook-cockroachdb-operator
       containers:
       - name: rook-cockroachdb-operator
-        image: rook/cockroachdb:master
+        image: rook/cockroachdb:v0.9.3
         args: ["cockroachdb", "operator"]
         env:
         - name: POD_NAME

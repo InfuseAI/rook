@@ -1,6 +1,6 @@
 ---
 title: Ceph Operator
-weight: 51
+weight: 101
 indent: true
 ---
 
@@ -38,7 +38,15 @@ After the helm chart is installed, you will need to [create a Rook cluster](ceph
 
 The `helm install` command deploys rook on the Kubernetes cluster in the default configuration. The [configuration](#configuration) section lists the parameters that can be configured during installation. It is recommended that the rook operator be installed into the `rook-ceph-system` namespace (you will install your clusters into separate namespaces).
 
-Rook currently publishes builds of the Ceph operator to the `beta`, `alpha`, and `master` channels. In the future `stable` will also be available.
+Rook currently publishes builds of the Ceph operator to the `stable`, `beta`, `alpha`, and `master` channels.
+
+### Stable
+The stable channel is the most recent release of Rook that is considered stable for the community, starting with the v0.9 release.
+
+```console
+helm repo add rook-stable https://charts.rook.io/stable
+helm install --namespace rook-ceph-system rook-stable/rook-ceph
+```
 
 ### Beta
 The beta channel is the most recent release of Rook that is considered nearly stable for the community, starting with the v0.8 release.
@@ -95,41 +103,46 @@ The command removes all the Kubernetes components associated with the chart and 
 
 The following tables lists the configurable parameters of the rook-operator chart and their default values.
 
-| Parameter                 | Description                                                     | Default                                                |
-| ------------------------- | --------------------------------------------------------------- | ------------------------------------------------------ |
-| `image.repository`        | Image                                                           | `rook/ceph`                                            |
-| `image.tag`               | Image tag                                                       | `master`                                               |
-| `image.pullPolicy`        | Image pull policy                                               | `IfNotPresent`                                         |
-| `rbacEnable`              | If true, create & use RBAC resources                            | `true`                                                 |
-| `pspEnable`               | If true, create & use PSP resources                             | `true`                                                 |
-| `resources`               | Pod resource requests & limits                                  | `{}`                                                   |
-| `annotations`             | Pod annotations                                                 | `{}`                                                   |
-| `logLevel`                | Global log level                                                | `INFO`                                                 |
-| `nodeSelector`            | Kubernetes `nodeSelector` to add to the Deployment.             | <none>                                                 |
-| `tolerations`             | List of Kubernetes `tolerations` to add to the Deployment.      | `[]`                                                   |
-| `agent.flexVolumeDirPath` | Path where the Rook agent discovers the flex volume plugins (*) | `/usr/libexec/kubernetes/kubelet-plugins/volume/exec/` |
-| `agent.toleration`        | Toleration for the agent pods                                   | <none>                                                 |
-| `agent.tolerationKey`     | The specific key of the taint to tolerate                       | <none>                                                 |
-| `discover.toleration`     | Toleration for the discover pods                                | <none>                                                 |
-| `discover.tolerationKey`  | The specific key of the taint to tolerate                       | <none>                                                 |
-| `mon.healthCheckInterval` | The frequency for the operator to check the mon health          | `45s`                                                  |
-| `mon.monOutTimeout`       | The time to wait before failing over an unhealthy mon           | `300s`                                                 |
+| Parameter                    | Description                                                                                             | Default                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `image.repository`           | Image                                                                                                   | `rook/ceph`                                            |
+| `image.tag`                  | Image tag                                                                                               | `master`                                               |
+| `image.pullPolicy`           | Image pull policy                                                                                       | `IfNotPresent`                                         |
+| `rbacEnable`                 | If true, create & use RBAC resources                                                                    | `true`                                                 |
+| `pspEnable`                  | If true, create & use PSP resources                                                                     | `true`                                                 |
+| `resources`                  | Pod resource requests & limits                                                                          | `{}`                                                   |
+| `annotations`                | Pod annotations                                                                                         | `{}`                                                   |
+| `logLevel`                   | Global log level                                                                                        | `INFO`                                                 |
+| `nodeSelector`               | Kubernetes `nodeSelector` to add to the Deployment.                                                     | <none>                                                 |
+| `tolerations`                | List of Kubernetes `tolerations` to add to the Deployment.                                              | `[]`                                                   |
+| `hostpathRequiresPrivileged` | Runs Ceph Pods as privileged to be able to write to `hostPath`s in OpenShift with SELinux restrictions. | `false`                                                |
+| `agent.flexVolumeDirPath`    | Path where the Rook agent discovers the flex volume plugins (*)                                         | `/usr/libexec/kubernetes/kubelet-plugins/volume/exec/` |
+| `agent.libModulesDirPath`    | Path where the Rook agent should look for kernel modules (*)                                            | `/lib/modules`                                         |
+| `agent.mounts`               | Additional paths to be mounted in the agent container                                                   | <none>                                                 |
+| `agent.mountSecurityMode`    | Mount Security Mode for the agent.                                                                      | `Any`                                                  |
+| `agent.toleration`           | Toleration for the agent pods                                                                           | <none>                                                 |
+| `agent.tolerationKey`        | The specific key of the taint to tolerate                                                               | <none>                                                 |
+| `discover.toleration`        | Toleration for the discover pods                                                                        | <none>                                                 |
+| `discover.tolerationKey`     | The specific key of the taint to tolerate                                                               | <none>                                                 |
+| `mon.healthCheckInterval`    | The frequency for the operator to check the mon health                                                  | `45s`                                                  |
+| `mon.monOutTimeout`          | The time to wait before failing over an unhealthy mon                                                   | `300s`                                                 |
 
 &ast; For information on what to set `agent.flexVolumeDirPath` to, please refer to the [Rook flexvolume documentation](flexvolume.md)
+&ast; `agent.mounts` should have this format `mountname1=/host/path:/container/path,mountname2=/host/path2:/container/path2`
 
 ### Command Line
 You can pass the settings with helm command line parameters. Specify each parameter using the
 `--set key=value[,key=value]` argument to `helm install`. For example, the following command will install rook where RBAC is not enabled.
 
 ```console
-$ helm install --namespace rook-ceph-system --name rook-ceph rook-beta/rook-ceph --set rbacEnable=false
+$ helm install --namespace rook-ceph-system --name rook-ceph rook-stable/rook-ceph --set rbacEnable=false
 ```
 
 ### Settings File
 Alternatively, a yaml file that specifies the values for the above parameters (`values.yaml`) can be provided while installing the chart.
 
 ```console
-$ helm install --namespace rook-ceph-system --name rook-ceph rook-beta/rook-ceph -f values.yaml
+$ helm install --namespace rook-ceph-system --name rook-ceph rook-stable/rook-ceph -f values.yaml
 ```
 
 Here are the sample settings to get you started.

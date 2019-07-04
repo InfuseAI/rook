@@ -42,6 +42,7 @@ pipeline {
                 }
             }
             steps {
+                sh 'build/run make -j\$(nproc) vendor.check'
                 sh 'build/run make -j\$(nproc) build.all'
             }
         }
@@ -64,13 +65,14 @@ pipeline {
             }
             steps{
                 sh 'cat _output/version | xargs tests/scripts/makeTestImages.sh  save amd64'
-                stash name: 'repo-amd64',includes: 'ceph-amd64.tar,cockroachdb-amd64.tar,nfs-amd64.tar,build/common.sh,_output/tests/linux_amd64/,_output/charts/,tests/scripts/'
+                stash name: 'repo-amd64',includes: 'ceph-amd64.tar,cockroachdb-amd64.tar,cassandra-amd64.tar,nfs-amd64.tar,build/common.sh,_output/tests/linux_amd64/,_output/charts/,tests/scripts/'
                 script{
                     def data = [
                         "aws_1.8.x": "v1.8.5",
                         "gce_1.9.x": "v1.9.9",
                         "aws_1.10.x": "v1.10.5",
-                        "aws_1.11.x": "v1.11.1"
+                        "aws_1.11.x": "v1.11.1",
+                        "aws_1.12.x": "v1.12.0"
                     ]
                     testruns = [:]
                     for (kv in mapToList(data)) {
@@ -83,8 +85,8 @@ pipeline {
                     finally{
                         sh "build/run go get -u -f  github.com/jstemmer/go-junit-report"
                         for (kv in mapToList(data)) {
-                            unstash "${kv[0]}_${kv[1]}_result"
-                            sh "cat _output/tests/${kv[0]}_${kv[1]}_integrationTests.log | _output/go-junit-report > _output/tests/${kv[0]}_${kv[1]}_integrationTests.xml"
+                            unstash "${kv[1]}_result"
+                            sh "cat _output/tests/${kv[1]}_integrationTests.log | _output/go-junit-report > _output/tests/${kv[1]}_integrationTests.xml"
                         }
                     }
                 }
@@ -140,26 +142,30 @@ def RunIntegrationTest(k, v) {
                             echo "Running Smoke Tests"
                             sh '''#!/bin/bash
                                   set -o pipefail
-                                  export KUBECONFIG=$HOME/admin.conf
+                                  export PATH="/tmp/rook-tests-scripts-helm/linux-amd64:$PATH" \
+                                      KUBECONFIG=$HOME/admin.conf
                                   kubectl config view
-                                  _output/tests/linux_amd64/integration -test.v -test.timeout 600s -test.run SmokeSuite --host_type '''+"${k}"+''' 2>&1 | tee _output/tests/integrationTests.log'''
+                                  _output/tests/linux_amd64/integration -test.v -test.timeout 1800s -test.run SmokeSuite --host_type '''+"${k}"+''' --helm /tmp/rook-tests-scripts-helm/linux-amd64/helm 2>&1 | tee _output/tests/integrationTests.log'''
                         }
                         else {
                         echo "Running full regression"
                         sh '''#!/bin/bash
                               set -o pipefail
-                              export KUBECONFIG=$HOME/admin.conf
+                              export PATH="/tmp/rook-tests-scripts-helm/linux-amd64:$PATH" \
+                                  KUBECONFIG=$HOME/admin.conf
                               kubectl config view
-                              _output/tests/linux_amd64/integration -test.v -test.timeout 2400s --host_type '''+"${k}"+''' 2>&1 | tee _output/tests/integrationTests.log'''
+                              _output/tests/linux_amd64/integration -test.v -test.timeout 7200s --host_type '''+"${k}"+''' --helm /tmp/rook-tests-scripts-helm/linux-amd64/helm 2>&1 | tee _output/tests/integrationTests.log'''
                          }
                     }
                     finally{
                         sh "journalctl -u kubelet > _output/tests/kubelet_${v}.log"
+                        sh "journalctl > _output/tests/system_journalctl_${v}.log"
+                        sh "dmesg > _output/tests/system_dmesg_${v}.log"
                         sh '''#!/bin/bash
                               export KUBECONFIG=$HOME/admin.conf
                               tests/scripts/helm.sh clean || true'''
-                        sh "mv _output/tests/integrationTests.log _output/tests/${k}_${v}_integrationTests.log"
-                        stash name: "${k}_${v}_result",includes : "_output/tests/${k}_${v}_integrationTests.log,_output/tests/kubelet_${v}.log"
+                        sh "mv _output/tests/integrationTests.log _output/tests/${v}_integrationTests.log"
+                        stash name: "${v}_result",includes : "_output/tests/${v}_integrationTests.log"
                     }
                 }
             }

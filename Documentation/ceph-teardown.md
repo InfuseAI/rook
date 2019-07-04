@@ -1,6 +1,6 @@
 ---
-title: Ceph Cleanup
-weight: 4
+title: Cleanup
+weight: 39
 indent: true
 ---
 
@@ -19,11 +19,11 @@ If you are tearing down a cluster frequently for development purposes, it is ins
 ## Delete the Block and File artifacts
 First you will need to clean up the resources created on top of the Rook cluster.
 
-These commands will clean up the resources from the [block](block.md#teardown) and [file](filesystem.md#teardown) walkthroughs (unmount volumes, delete volume claims, etc). If you did not complete those parts of the walkthrough, you can skip these instructions:
+These commands will clean up the resources from the [block](ceph-block.md#teardown) and [file](ceph-filesystem.md#teardown) walkthroughs (unmount volumes, delete volume claims, etc). If you did not complete those parts of the walkthrough, you can skip these instructions:
 ```console
 kubectl delete -f ../wordpress.yaml
 kubectl delete -f ../mysql.yaml
-kubectl delete -n rook-ceph pool replicapool
+kubectl delete -n rook-ceph cephblockpool replicapool
 kubectl delete storageclass rook-ceph-block
 kubectl delete -f kube-registry.yaml
 ```
@@ -31,12 +31,12 @@ kubectl delete -f kube-registry.yaml
 ## Delete the Cluster CRD
 After those block and file resources have been cleaned up, you can then delete your Rook cluster. This is important to delete **before removing the Rook operator and agent or else resources may not be cleaned up properly**.
 ```console
-kubectl -n rook-ceph delete cluster.ceph.rook.io rook-ceph
+kubectl -n rook-ceph delete cephcluster rook-ceph
 ```
 
 Verify that the cluster CRD has been deleted before continuing to the next step.
 ```
-kubectl -n rook-ceph get cluster.ceph.rook.io
+kubectl -n rook-ceph get cephcluster
 ```
 
 ## Delete the Operator
@@ -59,6 +59,21 @@ In the future this step will not be necessary when we build on the K8s local sto
 
 If you modified the demo settings, additional cleanup is up to you for devices, host paths, etc.
 
+Disks on nodes used by Rook for osds can be reset to a usable state with the following methods:
+```sh
+#!/usr/bin/env bash
+DISK="/dev/sdb"
+# Zap the disk to a fresh, usable state (zap-all is important, b/c MBR has to be clean)
+# You will have to run this step for all disks.
+sgdisk --zap-all $DISK
+
+# These steps only have to be run once on each node
+# If rook sets up osds using ceph-volume, teardown leaves some devices mapped that lock the disks.
+ls /dev/mapper/ceph-* | xargs -I% -- dmsetup remove %
+# ceph-volume setup can leave ceph-<UUID> directories in /dev (unnecessary clutter)
+rm -rf /dev/ceph-*
+```
+
 ## Troubleshooting
 If the cleanup instructions are not executed in the order above, or you otherwise have difficulty cleaning up the cluster, here are a few things to try.
 
@@ -72,7 +87,7 @@ If a pod is still terminating, you will need to wait or else attempt to forceful
 
 Now look at the cluster CRD:
 ```
-kubectl -n rook-ceph get cluster.ceph.rook.io
+kubectl -n rook-ceph get cephcluster
 ```
 If the cluster CRD still exists even though you have executed the delete command earlier, see the next section on removing the finalizer.
 
@@ -83,7 +98,7 @@ The operator is responsible for removing the finalizer after the mounts have bee
 If for some reason the operator is not able to remove the finalizer (ie. the operator is not running anymore), you can delete the finalizer manually with the following command:
 
 ```
-kubectl -n rook-ceph patch clusters.ceph.rook.io rook-ceph -p '{"metadata":{"finalizers": []}}' --type=merge
+kubectl -n rook-ceph patch cephclusters.ceph.rook.io rook-ceph -p '{"metadata":{"finalizers": []}}' --type=merge
 ```
 
 Within a few seconds you should see that the cluster CRD has been deleted and will no longer block other cleanup such as deleting the `rook-ceph` namespace.

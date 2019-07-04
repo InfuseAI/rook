@@ -22,7 +22,7 @@ import (
 	"github.com/google/uuid"
 )
 
-//CephManifestsV0_8 wraps rook yaml definitions
+// CephManifestsV0_8 wraps rook yaml definitions
 type CephManifestsV0_8 struct {
 	imageTag string
 }
@@ -99,7 +99,7 @@ spec:
   version: v1alpha2`
 }
 
-//GetRookOperator returns rook Operator  manifest
+// GetRookOperator returns rook Operator  manifest
 func (m *CephManifestsV0_8) GetRookOperator(namespace string) string {
 
 	return `kind: Namespace
@@ -326,7 +326,7 @@ spec:
               fieldPath: metadata.namespace`
 }
 
-//GetRookCluster returns rook-cluster manifest
+// GetRookCluster returns rook-cluster manifest
 func (m *CephManifestsV0_8) GetClusterRoles(namespace, systemNamespace string) string {
 	return `apiVersion: v1
 kind: ServiceAccount
@@ -375,7 +375,7 @@ subjects:
   namespace: ` + namespace
 }
 
-//GetRookCluster returns rook-cluster manifest
+// GetRookCluster returns rook-cluster manifest
 func (m *CephManifestsV0_8) GetRookCluster(settings *ClusterSettings) string {
 	return `apiVersion: ceph.rook.io/v1beta1
 kind: Cluster
@@ -404,7 +404,7 @@ spec:
       journalSizeMB: "1024"`
 }
 
-//GetRookToolBox returns rook-toolbox manifest
+// GetRookToolBox returns rook-toolbox manifest
 func (m *CephManifestsV0_8) GetRookToolBox(namespace string) string {
 	return `apiVersion: v1
 kind: Pod
@@ -453,7 +453,7 @@ spec:
           path: mon-endpoints`
 }
 
-//GetCleanupPod gets a cleanup Pod manifest
+// GetCleanupPod gets a cleanup Pod manifest
 func (m *CephManifestsV0_8) GetCleanupPod(node, removalDir string) string {
 	return `apiVersion: batch/v1
 kind: Job
@@ -494,7 +494,7 @@ spec:
     size: ` + replicaSize
 }
 
-func (m *CephManifestsV0_8) GetBlockStorageClassDef(poolName string, storageClassName string, namespace string, varClusterName bool) string {
+func (m *CephManifestsV0_8) GetBlockStorageClassDef(poolName string, storageClassName string, reclaimPolicy string, namespace string, varClusterName bool) string {
 	namespaceParameter := "clusterNamespace"
 	if varClusterName {
 		namespaceParameter = "clusterName"
@@ -524,16 +524,17 @@ spec:
       storage: 10M`
 }
 
-func (m *CephManifestsV0_8) GetBlockPoolStorageClassAndPvcDef(namespace string, poolName string, storageClassName string, blockName string, accessMode string) string {
+func (m *CephManifestsV0_8) GetBlockPoolStorageClassAndPvcDef(namespace string, poolName string, storageClassName string, reclaimPolicy string, blockName string, accessMode string) string {
 	return concatYaml(m.GetBlockPoolDef(poolName, namespace, "1"),
-		concatYaml(m.GetBlockStorageClassDef(poolName, storageClassName, namespace, false), m.GetBlockPvcDef(blockName, storageClassName, accessMode)))
+		concatYaml(m.GetBlockStorageClassDef(poolName, storageClassName, reclaimPolicy, namespace, false), m.GetBlockPvcDef(blockName, storageClassName, accessMode)))
 }
 
-func (m *CephManifestsV0_8) GetBlockPoolStorageClass(namespace string, poolName string, storageClassName string) string {
-	return concatYaml(m.GetBlockPoolDef(poolName, namespace, "1"), m.GetBlockStorageClassDef(poolName, storageClassName, namespace, false))
+func (m *CephManifestsV0_8) GetBlockPoolStorageClass(namespace string, poolName string, storageClassName string, reclaimPolicy string) string {
+	return concatYaml(m.GetBlockPoolDef(poolName, namespace, "1"), m.GetBlockStorageClassDef(poolName, storageClassName, reclaimPolicy, namespace, false))
 }
 
-func (m *CephManifestsV0_8) GetFilesystem(namespace, name string) string {
+// GetFilesystem returns the manifest to create a Rook filesystem resource with the given config.
+func (m *CephManifestsV0_8) GetFilesystem(namespace, name string, activeCount int) string {
 	return `apiVersion: ceph.rook.io/v1beta1
 kind: Filesystem
 metadata:
@@ -547,7 +548,7 @@ spec:
   - replicated:
       size: 1
   metadataServer:
-    activeCount: 1
+    activeCount: ` + strconv.Itoa(activeCount) + `
     activeStandby: true`
 }
 
@@ -572,4 +573,8 @@ spec:
     instances: ` + strconv.Itoa(replicaCount) + `
     allNodes: false
 `
+}
+
+func (m *CephManifestsV0_8) GetObjectStoreUser(namespace, name string, displayName string, store string) string {
+	return ""
 }

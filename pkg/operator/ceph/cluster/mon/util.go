@@ -14,13 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package mon for the Ceph monitors.
 package mon
 
 import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"os"
 	"path"
 	"strconv"
@@ -30,7 +30,7 @@ import (
 	"github.com/rook/rook/pkg/clusterd"
 	"github.com/rook/rook/pkg/daemon/ceph/client"
 	cephconfig "github.com/rook/rook/pkg/daemon/ceph/config"
-	"github.com/rook/rook/pkg/daemon/ceph/mon"
+	mondaemon "github.com/rook/rook/pkg/daemon/ceph/mon"
 	"github.com/rook/rook/pkg/operator/k8sutil"
 	"github.com/rook/rook/pkg/util/exec"
 	"github.com/rook/rook/pkg/util/sys"
@@ -51,7 +51,6 @@ func LoadClusterInfo(context *clusterd.Context, namespace string) (*cephconfig.C
 
 // CreateOrLoadClusterInfo constructs or loads a clusterinfo and returns it along with the maxMonID
 func CreateOrLoadClusterInfo(context *clusterd.Context, namespace string, ownerRef *metav1.OwnerReference) (*cephconfig.ClusterInfo, int, *Mapping, error) {
-
 	var clusterInfo *cephconfig.ClusterInfo
 	maxMonID := -1
 	monMapping := &Mapping{
@@ -96,8 +95,8 @@ func CreateOrLoadClusterInfo(context *clusterd.Context, namespace string, ownerR
 	return clusterInfo, maxMonID, monMapping, nil
 }
 
-// WriteConnectionConfig save monitor connection config to disk
-func WriteConnectionConfig(context *clusterd.Context, clusterInfo *cephconfig.ClusterInfo) error {
+// writeConnectionConfig save monitor connection config to disk
+func writeConnectionConfig(context *clusterd.Context, clusterInfo *cephconfig.ClusterInfo) error {
 	// write the latest config to the config dir
 	if err := cephconfig.GenerateAdminConnectionConfig(context, clusterInfo); err != nil {
 		return fmt.Errorf("failed to write connection config. %+v", err)
@@ -108,7 +107,6 @@ func WriteConnectionConfig(context *clusterd.Context, clusterInfo *cephconfig.Cl
 
 // loadMonConfig returns the monitor endpoints and maxMonID
 func loadMonConfig(clientset kubernetes.Interface, namespace string) (map[string]*cephconfig.MonInfo, int, *Mapping, error) {
-
 	monEndpointMap := map[string]*cephconfig.MonInfo{}
 	maxMonID := -1
 	monMapping := &Mapping{
@@ -127,7 +125,7 @@ func loadMonConfig(clientset kubernetes.Interface, namespace string) (map[string
 
 	// Parse the monitor List
 	if info, ok := cm.Data[EndpointDataKey]; ok {
-		monEndpointMap = mon.ParseMonEndpoints(info)
+		monEndpointMap = mondaemon.ParseMonEndpoints(info)
 	}
 
 	// Parse the max monitor id
@@ -211,7 +209,7 @@ func createNamedClusterInfo(context *clusterd.Context, clusterName string) (*cep
 	}
 
 	// generate the admin secret if one was not provided at the command line
-	args := []string{"--set-uid=0", "--cap", "mon", "'allow *'", "--cap", "osd", "'allow *'", "--cap", "mgr", "'allow *'", "--cap", "mds", "'allow'"}
+	args := []string{"--cap", "mon", "'allow *'", "--cap", "osd", "'allow *'", "--cap", "mgr", "'allow *'", "--cap", "mds", "'allow'"}
 	adminSecret, err := genSecret(context.Executor, dir, client.AdminUsername, args)
 	if err != nil {
 		return nil, err
@@ -259,27 +257,11 @@ func extractKey(contents string) (string, error) {
 	return secret, nil
 }
 
-// convert an index to a mon name based on as few letters of the alphabet as possible
-func indexToName(index int) string {
-	var result string
-	for {
-		i := index % maxPerChar
-		c := 'z' - maxPerChar + i + 1
-		result = fmt.Sprintf("%c%s", c, result)
-		if index < maxPerChar {
-			break
-		}
-		// subtract 1 since the character conversion is zero-based
-		index = (index / maxPerChar) - 1
-	}
-	return result
-}
-
 // convert the mon name to the numeric mon ID
 func fullNameToIndex(name string) (int, error) {
 	prefix := appName + "-"
 	if strings.Index(name, prefix) != -1 && len(prefix) < len(name) {
-		return nameToIndex(name[len(prefix)+1:])
+		return k8sutil.NameToIndex(name[len(prefix)+1:])
 	}
 
 	// attempt to parse the legacy mon name
@@ -294,20 +276,14 @@ func fullNameToIndex(name string) (int, error) {
 	return id, nil
 }
 
-func nameToIndex(name string) (int, error) {
-	factor := 1
-	for i := 1; i < len(name); i++ {
-		factor *= maxPerChar
+// getPortFromEndpoint return the port from an endpoint string (my-host:6790)
+func getPortFromEndpoint(endpoint string) int32 {
+	port := mondaemon.DefaultPort
+	_, portString, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		logger.Errorf("failed to split host and port for endpoint %s, assuming default Ceph port %d", endpoint, port)
+	} else {
+		port, _ = strconv.Atoi(portString)
 	}
-	var result int
-	for _, c := range name {
-		charVal := int('z' - c + 1)
-		if charVal < 0 || charVal >= maxPerChar {
-			return -1, fmt.Errorf("invalid char '%c' in %s", c, name)
-		}
-		result += charVal * factor
-		factor /= maxPerChar
-	}
-	return result, nil
-
+	return int32(port)
 }

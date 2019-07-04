@@ -21,8 +21,8 @@ import (
 	"os"
 
 	"github.com/rook/rook/cmd/rook/rook"
-	"github.com/rook/rook/pkg/daemon/ceph/mon"
-	"github.com/rook/rook/pkg/daemon/ceph/rgw"
+	mondaemon "github.com/rook/rook/pkg/daemon/ceph/mon"
+	rgwdaemon "github.com/rook/rook/pkg/daemon/ceph/rgw"
 	"github.com/rook/rook/pkg/util/flags"
 	"github.com/spf13/cobra"
 )
@@ -53,10 +53,10 @@ func init() {
 
 	flags.SetFlagsFromEnv(rgwCmd.Flags(), rook.RookEnvVarPrefix)
 
-	rgwCmd.RunE = startRGW
+	rgwCmd.RunE = initRGW
 }
 
-func startRGW(cmd *cobra.Command, args []string) error {
+func initRGW(cmd *cobra.Command, args []string) error {
 	required := []string{"mon-endpoints", "cluster-name", "rgw-name", "rgw-keyring"}
 	if err := flags.VerifyRequiredFlags(rgwCmd, required); err != nil {
 		return err
@@ -74,8 +74,8 @@ func startRGW(cmd *cobra.Command, args []string) error {
 
 	rook.LogStartupInfo(rgwCmd.Flags())
 
-	clusterInfo.Monitors = mon.ParseMonEndpoints(cfg.monEndpoints)
-	config := &rgw.Config{
+	clusterInfo.Monitors = mondaemon.ParseMonEndpoints(cfg.monEndpoints)
+	config := &rgwdaemon.Config{
 		ClusterInfo:     &clusterInfo,
 		Name:            rgwName,
 		Keyring:         rgwKeyring,
@@ -85,7 +85,7 @@ func startRGW(cmd *cobra.Command, args []string) error {
 		CertificatePath: rgwCert,
 	}
 
-	err := rgw.Run(createContext(), config)
+	err := rgwdaemon.Initialize(createContext(), config)
 	if err != nil {
 		rook.TerminateFatal(err)
 	}

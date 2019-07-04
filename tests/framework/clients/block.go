@@ -24,7 +24,7 @@ import (
 	"github.com/rook/rook/tests/framework/utils"
 )
 
-//BlockOperation is wrapper for k8s rook block operations
+// BlockOperation is wrapper for k8s rook block operations
 type BlockOperation struct {
 	k8sClient *utils.K8sHelper
 	manifests installer.CephManifests
@@ -68,8 +68,8 @@ func (b *BlockOperation) CreatePvc(claimName, storageClassName, mode string) (st
 	return b.k8sClient.ResourceOperation("create", b.manifests.GetBlockPvcDef(claimName, storageClassName, mode))
 }
 
-func (b *BlockOperation) CreateStorageClass(poolName, storageClassName, namespace string, varClusterName bool) (string, error) {
-	return b.k8sClient.ResourceOperation("create", b.manifests.GetBlockStorageClassDef(poolName, storageClassName, namespace, varClusterName))
+func (b *BlockOperation) CreateStorageClass(poolName, storageClassName, reclaimPolicy, namespace string, varClusterName bool) (string, error) {
+	return b.k8sClient.ResourceOperation("create", b.manifests.GetBlockStorageClassDef(poolName, storageClassName, reclaimPolicy, namespace, varClusterName))
 }
 
 func (b *BlockOperation) DeletePvc(claimName, storageClassName, mode string) error {
@@ -77,8 +77,8 @@ func (b *BlockOperation) DeletePvc(claimName, storageClassName, mode string) err
 	return err
 }
 
-func (b *BlockOperation) DeleteStorageClass(poolName, storageClassName, namespace string) error {
-	_, err := b.k8sClient.ResourceOperation("delete", b.manifests.GetBlockStorageClassDef(poolName, storageClassName, namespace, false))
+func (b *BlockOperation) DeleteStorageClass(poolName, storageClassName, reclaimPolicy, namespace string) error {
+	_, err := b.k8sClient.ResourceOperation("delete", b.manifests.GetBlockStorageClassDef(poolName, storageClassName, reclaimPolicy, namespace, false))
 	return err
 }
 

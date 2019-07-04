@@ -18,12 +18,14 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"syscall"
 
 	"strconv"
 
 	"regexp"
 
 	"github.com/rook/rook/pkg/clusterd"
+	"github.com/rook/rook/pkg/util/exec"
 )
 
 const (
@@ -31,9 +33,10 @@ const (
 )
 
 type CephBlockImage struct {
-	Name   string `json:"image"`
-	Size   uint64 `json:"size"`
-	Format int    `json:"format"`
+	Name     string `json:"image"`
+	Size     uint64 `json:"size"`
+	Format   int    `json:"format"`
+	InfoName string `json:"name"`
 }
 
 func ListImages(context *clusterd.Context, clusterName, poolName string) ([]CephBlockImage, error) {
@@ -61,6 +64,24 @@ func ListImages(context *clusterd.Context, clusterName, poolName string) ([]Ceph
 	return images, nil
 }
 
+func getImageInfo(context *clusterd.Context, clusterName, name, poolName string) (*CephBlockImage, error) {
+	imageSpec := getImageSpec(name, poolName)
+	args := []string{"info", imageSpec}
+	buf, err := ExecuteRBDCommand(context, clusterName, args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get image %s info: %+v", imageSpec, err)
+	}
+
+	var image CephBlockImage
+	if err = json.Unmarshal(buf, &image); err != nil {
+		return nil, fmt.Errorf("unmarshal failed: %+v. raw buffer response: %s", err, string(buf))
+	}
+
+	image.Name = image.InfoName
+
+	return &image, nil
+}
+
 // CreateImage creates a block storage image.
 // If dataPoolName is not empty, the image will use poolName as the metadata pool and the dataPoolname for data.
 func CreateImage(context *clusterd.Context, clusterName, name, poolName, dataPoolName string, size uint64) (*CephBlockImage, error) {
@@ -85,22 +106,23 @@ func CreateImage(context *clusterd.Context, clusterName, name, poolName, dataPoo
 
 	buf, err := ExecuteRBDCommandNoFormat(context, clusterName, args)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create image %s in pool %s of size %d: %+v. output: %s",
-			name, poolName, size, err, string(buf))
-	}
-
-	// now that the image is created, retrieve it
-	images, err := ListImages(context, clusterName, poolName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list images after successfully creating image %s: %v", name, err)
-	}
-	for i := range images {
-		if images[i].Name == name {
-			return &images[i], nil
+		cmdErr, ok := err.(*exec.CommandError)
+		if ok && cmdErr.ExitStatus() == int(syscall.EEXIST) {
+			// Image with the same name already exists in the given rbd pool. Continuing with the link to PV.
+			logger.Warningf("Requested image %s exists in pool %s. Continuing", name, poolName)
+		} else {
+			return nil, fmt.Errorf("failed to create image %s in pool %s of size %d: %+v. output: %s",
+				name, poolName, size, err, string(buf))
 		}
 	}
 
-	return nil, fmt.Errorf("failed to find image %s after creating it", name)
+	// now that the image is created, retrieve it
+	image, err := getImageInfo(context, clusterName, name, poolName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get image %s info after successfully creating it: %v", name, err)
+	}
+
+	return image, nil
 }
 
 func DeleteImage(context *clusterd.Context, clusterName, name, poolName string) error {
@@ -116,12 +138,12 @@ func DeleteImage(context *clusterd.Context, clusterName, name, poolName string) 
 }
 
 // MapImage maps an RBD image using admin cephfx and returns the device path
-func MapImage(context *clusterd.Context, imageName, poolName, clusterName, keyring, monitors string) error {
+func MapImage(context *clusterd.Context, imageName, poolName, id, keyring, clusterName, monitors string) error {
 	imageSpec := getImageSpec(imageName, poolName)
 	args := []string{
 		"map",
 		imageSpec,
-		"--id", "admin",
+		fmt.Sprintf("--id=%s", id),
 		fmt.Sprintf("--cluster=%s", clusterName),
 		fmt.Sprintf("--keyring=%s", keyring),
 		"-m", monitors,
@@ -137,12 +159,12 @@ func MapImage(context *clusterd.Context, imageName, poolName, clusterName, keyri
 }
 
 // UnMapImage unmap an RBD image from the node
-func UnMapImage(context *clusterd.Context, imageName, poolName, clusterName, keyring, monitors string, force bool) error {
+func UnMapImage(context *clusterd.Context, imageName, poolName, id, keyring, clusterName, monitors string, force bool) error {
 	deviceImage := getImageSpec(imageName, poolName)
 	args := []string{
 		"unmap",
 		deviceImage,
-		"--id", "admin",
+		fmt.Sprintf("--id=%s", id),
 		fmt.Sprintf("--cluster=%s", clusterName),
 		fmt.Sprintf("--keyring=%s", keyring),
 		"-m", monitors,

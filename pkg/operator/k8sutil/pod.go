@@ -19,8 +19,10 @@ package k8sutil
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -153,6 +155,21 @@ func MakeRookImage(version string) string {
 	return version
 }
 
+func PodsRunningWithLabel(clientset kubernetes.Interface, namespace, label string) (int, error) {
+	pods, err := clientset.CoreV1().Pods(namespace).List(metav1.ListOptions{LabelSelector: label})
+	if err != nil {
+		return 0, err
+	}
+
+	running := 0
+	for _, pod := range pods.Items {
+		if pod.Status.Phase == v1.PodRunning {
+			running++
+		}
+	}
+	return running, nil
+}
+
 // GetPodPhaseMap takes a list of pods and returns a map of pod phases to the names of pods that are in that phase
 func GetPodPhaseMap(pods *v1.PodList) map[v1.PodPhase][]string {
 	podPhaseMap := map[v1.PodPhase][]string{} // status to list of pod names with that phase
@@ -169,6 +186,32 @@ func GetPodPhaseMap(pods *v1.PodList) map[v1.PodPhase][]string {
 	}
 
 	return podPhaseMap
+}
+
+// GetJobLog gets the logs for the pod. If there is more than one pod with the label selector, the logs from
+// the first pod will be returned.
+func GetPodLog(clientset kubernetes.Interface, namespace string, labelSelector string) (string, error) {
+	opts := metav1.ListOptions{
+		LabelSelector: labelSelector,
+	}
+	pods, err := clientset.CoreV1().Pods(namespace).List(opts)
+	if err != nil {
+		return "", fmt.Errorf("failed to get version pod. %+v", err)
+	}
+	for _, pod := range pods.Items {
+		req := clientset.CoreV1().Pods(namespace).GetLogs(pod.Name, &v1.PodLogOptions{})
+		readCloser, err := req.Stream()
+		if err != nil {
+			return "", fmt.Errorf("failed to read from stream. %+v", err)
+		}
+
+		builder := &strings.Builder{}
+		defer readCloser.Close()
+		_, err = io.Copy(builder, readCloser)
+		return builder.String(), err
+	}
+
+	return "", fmt.Errorf("did not find any pods with label %s", labelSelector)
 }
 
 // DeleteDeployment makes a best effort at deleting a deployment and its pods, then waits for them to be deleted
@@ -246,4 +289,13 @@ func deleteResourceAndWait(namespace, name, resourceType string,
 	}
 
 	return fmt.Errorf("gave up waiting for %s pods to be terminated", name)
+}
+
+// Environment variables used by storage cluster daemons
+func ClusterDaemonEnvVars() []v1.EnvVar {
+	return []v1.EnvVar{
+		{Name: "POD_NAME", ValueFrom: &v1.EnvVarSource{FieldRef: &v1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+		{Name: "POD_NAMESPACE", ValueFrom: &v1.EnvVarSource{FieldRef: &v1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
+		{Name: "NODE_NAME", ValueFrom: &v1.EnvVarSource{FieldRef: &v1.ObjectFieldSelector{FieldPath: "spec.nodeName"}}},
+	}
 }

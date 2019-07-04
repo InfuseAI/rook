@@ -7,9 +7,13 @@ indent: true
 # RBAC Security
 
 ## Cluster Role
+
+**NOTE** This is only needed when you are not already `cluster-admin` in your Kubernetes cluster!
+
 Creating the Rook operator requires privileges for setting up RBAC. To launch the operator you need to have created your user certificate that is bound to ClusterRole `cluster-admin`.
 
 One simple way to achieve it is to assign your certificate with the `system:masters` group:
+
 ```
 -subj "/CN=admin/O=system:masters"
 ```
@@ -55,15 +59,15 @@ spec:
 
 **Hint**: Allowing `hostNetwork` usage is required when using `hostNetwork: true` in the Cluster `CustomResourceDefinition`!
 You are then also required to allow the usage of `hostPorts` in the `PodSecurityPolicy`. The given port range is a minimal
-working recommendation for rook:
+working recommendation for a Rook Ceph cluster:
  ```yaml
- hostPorts:
-   # CEPH ports
-   - min: 6789
-     max: 7300
-   # rook-api port
-   - min: 8124
-     max: 8124
+   hostPorts:
+     # Ceph ports
+     - min: 6789
+       max: 7300
+     # Ceph MGR Prometheus Metrics
+     - min: 9283
+       max: 9283
 ```
 
 ##### ClusterRole and ClusterRoleBinding
@@ -119,7 +123,7 @@ Create these two `RoleBindings` in the Namespace you plan to deploy your Rook Cl
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: rook
+  name: rook-ceph
 ---
 # Allow the default serviceAccount to use the privileged PSP
 apiVersion: rbac.authorization.k8s.io/v1
@@ -148,6 +152,6 @@ roleRef:
   name: privileged-psp-user
 subjects:
 - kind: ServiceAccount
-  name: rook-ceph-cluster
+  name: rook-ceph-osd
   namespace: rook-ceph
 ```

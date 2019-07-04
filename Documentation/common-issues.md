@@ -1,6 +1,6 @@
 ---
 title: Common Issues
-weight: 78
+weight: 114
 indent: true
 ---
 
@@ -8,13 +8,13 @@ indent: true
 
 Many of these problem cases are hard to summarize down to a short phrase that adequately describes the problem. Each problem will start with a bulleted list of symptoms. Keep in mind that all symptoms may not apply depending upon the configuration of the Rook. If the majority of the symptoms are seen there is a fair chance you are experiencing that problem.
 
-If after trying the suggestions found on this page and the problem is not resolved, the Rook team is very happy to help you troubleshoot the issues in their Slack channel. Once you have [registered for the Rook Slack](https://rook-slackin.herokuapp.com/), proceed to the General channel to ask for assistance.
+If after trying the suggestions found on this page and the problem is not resolved, the Rook team is very happy to help you troubleshoot the issues in their Slack channel. Once you have [registered for the Rook Slack](https://slack.rook.io), proceed to the General channel to ask for assistance.
 
 ## Table of Contents
 - [Troubleshooting Techniques](#troubleshooting-techniques)
 - [Pod using Rook storage is not running](#pod-using-rook-storage-is-not-running)
 - [Cluster failing to service requests](#cluster-failing-to-service-requests)
-- [Only a single monitor pod starts](#only-a-single-monitor-pod-starts)
+- [Monitors are the only pods running](#monitors-are-the-only-pods-running)
 - [OSD pods are failing to start](#osd-pods-are-failing-to-start)
 - [OSDs are not created on my devices](#osd-pods-are-not-created-on-my-devices)
 - [Node hangs after reboot](#node-hangs-after-reboot)
@@ -47,7 +47,7 @@ Kubernetes status is the first line of investigating when something goes wrong w
 After you verify the basic health of the running pods, next you will want to run Ceph tools for status of the storage components. There are two ways to run the Ceph tools, either in the Rook toolbox or inside other Rook pods that are already running.
 
 ### Tools in the Rook Toolbox
- The [rook-ceph-tools pod](./toolbox.md) is a one-stop shop for both Ceph tools and other troubleshooting tools. Once the pod is up and running one connect to the pod to execute Ceph commands to evaluate that current state of the cluster.
+ The [rook-ceph-tools pod](./ceph-toolbox.md) provides a simple environment to run Ceph tools. Once the pod is up and running, connect to the pod to execute Ceph commands to evaluate that current state of the cluster.
  ```bash
  kubectl -n rook-ceph exec -it $(kubectl -n rook-ceph get pod -l "app=rook-ceph-tools" -o jsonpath='{.items[0].metadata.name}') bash
  ```
@@ -213,7 +213,7 @@ If `dmesg` shows something similar to below, then it means you have an old kerne
 libceph: mon2 10.205.92.13:6790 feature set mismatch, my 4a042a42 < server's 2004a042a42, missing 20000000000
 ```
 If `uname -a` shows that you have a kernel version older than `3.15`, you'll need to perform **one** of the following:
-* Disable some Ceph features by starting the [rook toolbox](./toolbox.md) and running `ceph osd crush tunables bobtail`
+* Disable some Ceph features by starting the [rook toolbox](./ceph-toolbox.md) and running `ceph osd crush tunables bobtail`
 * Upgrade your kernel to `3.15` or later.
 
 ### Filesystem Mounting
@@ -227,7 +227,7 @@ This will happen in kernels with versions older than 4.7, where the option `mds_
 
 In this case, if there is only one filesystem in the Rook cluster, there should be no issues and the mount should succeed. If you have more than one filesystem, inconsistent results may arise and the filesystem mounted may not be the one you specified.
 
-If the issue is still not resolved from the steps above, please come chat with us on the **#general** channel of our [Rook Slack](https://rook-slackin.herokuapp.com/).
+If the issue is still not resolved from the steps above, please come chat with us on the **#general** channel of our [Rook Slack](https://slack.rook.io).
 We want to help you get your storage working and learn from those lessons to prevent users in the future from seeing the same issue.
 
 # Cluster failing to service requests
@@ -240,7 +240,7 @@ We want to help you get your storage working and learn from those lessons to pre
 * One or more MONs are restarting periodically
 
 ## Investigation
-Create a [rook-ceph-tools pod](./toolbox.md) to investigate the current state of CEPH. Here is an example of what one might see. In this case the `ceph status` command would just hang so a CTRL-C needed to be sent.
+Create a [rook-ceph-tools pod](./ceph-toolbox.md) to investigate the current state of CEPH. Here is an example of what one might see. In this case the `ceph status` command would just hang so a CTRL-C needed to be sent.
 
 ```console
 $ kubectl -n rook-ceph exec -it $(kubectl -n rook-ceph get pod -l "app=rook-ceph-tools" -o jsonpath='{.items[0].metadata.name}') bash
@@ -266,17 +266,22 @@ What is happening here is that the MON pods are restarting and one or more of th
 
 The `dataDirHostPath` setting specifies a path on the local host for the CEPH daemons to store configuration and data. Setting this to a path like `/var/lib/rook`, reapplying your Cluster CRD and restarting all the CEPH daemons (MON, MGR, OSD, RGW) should solve this problem. After the CEPH daemons have been restarted, it is advisable to restart the [rook-tool pod](./toolbox.md).
 
-# Only a single monitor pod starts
+# Monitors are the only pods running
 
 ## Symptoms
 * Rook operator is running
-* Only one mon pod is running
+* Either a single mon starts or the mons skip letters, specifically named `a`, `d`, and `f`
+* No mgr, osd, or other daemons are created
 
 ## Investigation
 When the operator is starting a cluster, the operator will start one mon at a time and check that they are healthy before continuing to bring up all three mons.
-If the first mon is not detected healthy, the operator will continue to check until it is healthy. There are two likely causes for the mon health not being detected:
+If the first mon is not detected healthy, the operator will continue to check until it is healthy. If the first mon fails to start, a second and then a third
+mon may attempt to start. However, they will never form quorum and the orchestration will be blocked from proceeding.
+
+The likely causes for the mon health not being detected:
 - The operator pod does not have network connectivity to the mon pod
 - The mon pod is failing to start
+- One or more mon pods are in running state, but are not able to form quorum
 
 ### Operator fails to connect to the mon
 First look at the logs of the operator to confirm if it is able to connect to the mons.
@@ -325,6 +330,18 @@ $ kubectl -n rook-ceph describe pod -l mon=rook-ceph-mon0
 ...
 ```
 
+See the solution in the next section regarding cleaning up the `dataDirHostPath` on the nodes.
+
+### Three mons named a, d, and f
+
+If you see the three mons running with the names `a`, `d`, and `f`, they likely did not form quorum even though they are running.
+```
+NAME                               READY   STATUS    RESTARTS   AGE
+rook-ceph-mon-a-7d9fd97d9b-cdq7g   1/1     Running   0          10m
+rook-ceph-mon-d-77df8454bd-r5jwr   1/1     Running   0          9m2s
+rook-ceph-mon-f-58b4f8d9c7-89lgs   1/1     Running   0          7m38s
+```
+
 ### Solution
 This is a common problem reinitializing the Rook cluster when the local directory used for persistence has **not** been purged.
 This directory is the `dataDirHostPath` setting in the cluster CRD and is typically set to `/var/lib/rook`.
@@ -333,6 +350,7 @@ Then when the cluster CRD is applied to start a new cluster, the rook-operator s
 
 **Important: Deleting the `dataDirHostPath` folder is destructive to the storage. Only delete the folder if you are trying to permanently purge the Rook cluster.**
 
+See the [Cleanup Guide](ceph-teardown.md) for more details.
 
 # OSD pods are failing to start
 
@@ -500,4 +518,4 @@ Rebooting the system to use the new kernel, this issue should be fixed: the Agen
 The only solution to this problem is to upgrade your kernel to `4.7` or higher.
 This is due to a mount flag added in the kernel version `4.7` which allows to chose the filesystem by name.
 
-For additional info on the kernel version requirement for multiple shared filesystems (CephFS), see [Filesystem - Kernel version requirement](filesystem.md#kernel-version-requirement).
+For additional info on the kernel version requirement for multiple shared filesystems (CephFS), see [Filesystem - Kernel version requirement](ceph-filesystem.md#kernel-version-requirement).
