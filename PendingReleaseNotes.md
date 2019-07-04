@@ -15,6 +15,12 @@
 - [Cassandra](http://cassandra.apache.org/) and [Scylla](https://www.scylladb.com/) are now supported by Rook with the rook-cassandra operator. Users can now deploy, configure and manage Cassandra or Scylla clusters, by creating an instance of the `clusters.cassandra.rook.io` custom resource. See the [user guide](Documentation/cassandra.md) to get started.
 - Service account (`rook-ceph-mgr`) added for the mgr daemon to grant the mgr orchestrator modules access to the K8s APIs.
 - The minimum version of Kubernetes supported by Rook changed from `1.7` to `1.8`.
+- LVM `dm` devices can now be used for Ceph OSDs.
+
+## Breaking Changes
+
+- Mons are [named consistently](https://github.com/rook/rook/issues/1751) with other daemons with the letters a, b, c, etc.
+- Mons are now created with Deployments instead of ReplicaSets to improve the upgrade implementation.
 - `reclaimPolicy` parameter of `StorageClass` definition is now supported.
 - K8s client-go updated from version 1.8.2 to 1.11.3
 - The toolbox manifest now creates a deployment based on the `rook/ceph` image instead of creating a pod on a specialized `rook/ceph-toolbox` image.
@@ -28,9 +34,6 @@
 - Recursive chown for mounts can now be toggled with the [ROOK_ENABLE_FSGROUP](https://github.com/rook/rook/issues/2254) environment variable.
 - Added the dashboard `port` configuration setting.
 - Added the dashboard `ssl` configuration setting.
-
-## Breaking Changes
-
 - The Ceph CRDs are now v1. With the version change, the `kind` has been renamed for the following Ceph CRDs:
   - `Cluster` --> `CephCluster`
   - `Pool` --> `CephBlockPool`
