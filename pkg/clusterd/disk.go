@@ -76,7 +76,8 @@ func DiscoverDevices(executor exec.Executor) ([]*sys.LocalDisk, error) {
 		}
 
 		diskType, ok := diskProps["TYPE"]
-		if !ok || (diskType != sys.SSDType && diskType != sys.CryptType && diskType != sys.DiskType && diskType != sys.PartType) {
+		if !ok || (diskType != sys.DiskType && diskType != sys.SSDType && diskType != sys.CryptType && diskType != sys.LVMType && diskType != sys.PartType && diskType != sys.LinearType) {
+			logger.Warningf("skipping device %s: unknown diskType %+s", d, diskType)
 			// unsupported disk type, just continue
 			continue
 		}
